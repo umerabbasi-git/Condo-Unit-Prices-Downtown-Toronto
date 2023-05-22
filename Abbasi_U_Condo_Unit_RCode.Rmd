@@ -1,0 +1,474 @@
+---
+title: "Abbasi_U_Condo_Unit_RCode"
+author: 'Umer Abbasi
+date: "2023-03-25"
+output:
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r , include=FALSE}
+library(car)
+library(sandwich)
+library(lmtest)
+```
+
+## EDA
+
+```{r}
+load("CondoData.Rda")
+CondoData <- data.frame(D) # Copying data to another var to manipulate
+CondoData <- na.omit(CondoData) # Removing Missing/NA Data
+
+# Adjusting the data frame to remove irrelevant variables for this study
+# Add an unique ID: index
+CondoData <- data.frame(index=1:nrow(D),price=D$price, maintenance=D$maintenance, 
+                        parking=D$parking, bathrooms=D$bathrooms, floor=D$floor, 
+                        age=D$age, pool=D$pool, hottub=D$hottub, gym=D$gym, 
+                        movieroom=D$movieroom, pet=D$pet, studio=D$studio,
+                        den=D$den, bedrooms=D$bedrooms, footage=D$footage)
+# Correcting all variables to be of one data type (numeric)
+CondoData[] <- lapply(CondoData, as.numeric)
+
+# Create about a 50/50 split in the data
+set.seed(1) # Setting seed to ensure consistent results across devices 
+train <- CondoData[sample(1:nrow(CondoData), 315/2, replace=F), ]
+test <- CondoData[which(!(CondoData$index %in% train$index)),]
+```
+
+We will perform a quick EDA of our variables:
+```{r}
+# Histograms of the entire dataset
+par(mfrow=c(3,3))
+for(i in 2:16){
+  hist(CondoData[,i], main=paste0("Histogram of ", names(CondoData)[i]), xlab=names(CondoData)[i])
+}
+
+# Boxplots of the entire dataset
+par(mfrow=c(3,3))
+for(i in 2:16){
+  boxplot(CondoData[,i], main=paste0("Boxplot of ", names(CondoData)[i]), xlab=names(CondoData)[i], horizontal=T)
+}
+
+# QQ-Plots Response vs. predictors
+par(mfrow=c(3,3))
+for(i in 3:16){
+  qqplot(CondoData[,i],CondoData[,2], main=paste0("Price vs. ", names(CondoData)[i]), xlab=names(CondoData)[i], ylab = "Price $")
+}
+```
+From the histogram we note price, maintenance, floor, studio and footage to be slightly right skewed. Whereas, pool, hot tub, gym, movie room as categorical variables seem left skewed. Box-plot reveals several outliers in our data with the cost of maintenance and square footage. QQ-plot shows most of our data is approximately normal.
+
+\newpage
+## Summary Statistics
+
+```{r}
+mtr <- apply(train[,-c(1)], 2, mean)
+sdtr <- apply(train[,-c(1)], 2, sd)
+
+mtest <- apply(test[,-c(1)], 2, mean)
+sdtest <- apply(test[,-c(1)], 2, sd)
+```
+
+We will observe the summary statistics in our training and test dataset:
+
+Variable | mean (s.d.) in training | mean (s.d.) in test
+---------|-------------------------|--------------------
+`r names(test)[2]` | `r round(mtr[1], 3)` (`r round(sdtr[1], 3)`) | `r round(mtest[1], 3)` (`r round(sdtest[1], 3)`)
+`r names(test)[3]` | `r round(mtr[2],3)` (`r round(sdtr[2],3)`) | `r round(mtest[2],3)` (`r round(sdtest[2],3)`)
+`r names(test)[4]` | `r round(mtr[3],3)` (`r round(sdtr[3],3)`) | `r round(mtest[3],3)` (`r round(sdtest[3],3)`)
+`r names(test)[5]` | `r round(mtr[4],3)` (`r round(sdtr[4],3)`) | `r round(mtest[4],3)` (`r round(sdtest[4],3)`)
+`r names(test)[6]` | `r round(mtr[5],3)` (`r round(sdtr[5],3)`) | `r round(mtest[5],3)` (`r round(sdtest[5],3)`)
+`r names(test)[7]` | `r round(mtr[6],3)` (`r round(sdtr[6],3)`) | `r round(mtest[6],3)` (`r round(sdtest[6],3)`)
+`r names(test)[8]` | `r round(mtr[7],3)` (`r round(sdtr[7],3)`) | `r round(mtest[7],3)` (`r round(sdtest[7],3)`)
+`r names(test)[9]` | `r round(mtr[8],3)` (`r round(sdtr[8],3)`) | `r round(mtest[8],3)` (`r round(sdtest[8],3)`)
+`r names(test)[10]` | `r round(mtr[9],3)` (`r round(sdtr[9],3)`) | `r round(mtest[9],3)` (`r round(sdtest[9],3)`)
+`r names(test)[11]` | `r round(mtr[10],3)` (`r round(sdtr[10],3)`) | `r round(mtest[10],3)` (`r round(sdtest[10],3)`)
+`r names(test)[12]` | `r round(mtr[11],3)` (`r round(sdtr[11],3)`) | `r round(mtest[11],3)` (`r round(sdtest[11],3)`)
+`r names(test)[13]` | `r round(mtr[12],3)` (`r round(sdtr[12],3)`) | `r round(mtest[12],3)` (`r round(sdtest[12],3)`)
+`r names(test)[14]` | `r round(mtr[13],3)` (`r round(sdtr[13],3)`) | `r round(mtest[13],3)` (`r round(sdtest[13],3)`)
+`r names(test)[15]` | `r round(mtr[14],3)` (`r round(sdtr[14],3)`) | `r round(mtest[14],3)` (`r round(sdtest[14],3)`)
+`r names(test)[16]` | `r round(mtr[15],3)` (`r round(sdtr[15],3)`) | `r round(mtest[15],3)` (`r round(sdtest[15],3)`)
+
+Table: Summary statistics in training and test dataset, where training set has size 157 and test set 158, approx. 50/50 split.
+
+\newpage
+## Building a Model
+
+With this dataset it's more efficient to build a model with all the variables and then reducing it where appropriate to achieve a best model, so we build this full model and check for model assumption and condition violations:
+
+```{r}
+full <- lm(price ~ . + footage*bathrooms + footage*bedrooms, data=train[,-c(1)])
+#price ~ maintenance + parking + bathrooms + floor + age + pool + hottub + gym + movieroom + pet +
+             # studio + den + bedrooms + footage + footage*bathrooms + footage*bedrooms
+summary(full)
+
+# checking conditions
+#pairs(train[,-c(1,2)])
+plot(train$price ~ fitted(full), main="Y vs Fitted", xlab="Fitted", ylab="Price") # Condition 1 Satisfied
+lines(lowess(train$price ~ fitted(full)), lty=2)
+abline(a = 0, b = 1)
+```
+Condition 1 is satisfied because the plot of Y vs. Fitted (or y hat) follows a random scatter around the identity function (the diagonal) and a simple function is present. Since the conditions are satisfied we proceed to checking the assumptions for any model violations:
+
+```{r, fig.width=6, fig.height=6}
+# checking model assumptions
+par(mfrow=c(4,4))
+plot(rstandard(full)~fitted(full), xlab="fitted", ylab="Residuals") # MLR 4 Violated
+for(i in c(3:14)){
+  plot(rstandard(full)~train[,i], xlab=names(train)[i], ylab="Residuals")
+}
+qqnorm(rstandard(full)) # Normality Assumption Satisfied
+qqline(rstandard(full))
+plot(density(resid(full)))
+```
+
+Residual vs. Fitted plot shows an obvious fanning pattern which could be an issue with constant variance for the response variable, price, and would likely require a transformation to fix.  Residual vs. predictor plots seem relatively linear, no linearity violation present. Normal QQ-Plot shows no issues with normality.
+
+So let's apply the transformations:
+
+```{r}
+# so transform the response in both the training and test set
+train$logPrice <- log(train$price) #2
+test$logPrice <- log(test$price) #2
+```
+
+Re-checking the model condition and assumptions after applying the transformation:
+
+```{r}
+full2 <- lm(logPrice ~ . + footage*bathrooms + footage*bedrooms, data=train[,-c(1,2)])
+summary(full2)
+# Check Conditions
+plot(train$logPrice ~ fitted(full2), main="Y vs Fitted", xlab="Fitted", ylab="(log)Price") # MLR 1 Holds
+lines(lowess(train$logPrice ~ fitted(full2)), lty=2)
+abline(a = 0, b = 1)
+
+# Check Assumptions
+par(mfrow=c(3,3))
+plot(rstandard(full2)~fitted(full2), xlab="fitted", ylab="Residuals") # MLR 4 Holds
+for(i in c(3:17)){
+  plot(rstandard(full2)~train[,i], xlab=names(train)[i], ylab="Residuals")
+}
+qqnorm(rstandard(full2))  # Normality Satisfied
+qqline(rstandard(full2))
+plot(density(resid(full2)))
+```
+**Multicollinearity (VIF)**
+
+Checking the correlation between variables before looking for multicollinearity:
+
+```{r}
+cor(train[,-c(1)])
+```
+
+Remove movieroom and pet as they are problematic and producing NA's
+Remove hottub as its perfectly correlated with pool
+
+Now we would look for multicollinearity [MLR 3] in our model:
+
+```{r}
+full3 <- lm(logPrice ~ .+ footage*bathrooms + footage*bedrooms, data=train[,-c(1,2,9,11,12)])
+vif(full3)
+```
+
+The result indicates an issue with severe multicollinearity (VIF>5) for the following variables in order of severity: bedrooms, bathrooms, footage, studio, and maintenance.
+
+We would like to build a model without multicollinearity, so we can remove all or part of the problematic variables. We will remove the problematic one-by-one until we reach VIF < 5.
+
+```{r}
+# A potential model removing LARGEST problematic predictor w/ VIF>5 
+# Remove bedrooms (15)
+temp0 <- lm(logPrice ~ . + footage*bathrooms, data=train[,-c(1,2,9,11,12,15)])
+vif(temp0)
+```
+
+VIF > 5 in temp0
+
+```{r}
+# A potential model removing TWO of the top problematic predictors w/ VIF>5
+# Remove bedrooms (15) and bathrooms (5)
+temp1 <- lm(logPrice ~ . , data=train[,-c(1,2,5,9,11,12,15)])
+vif(temp1)
+```
+
+VIF < 5 for each predictor in temp1. We will proceed with using temp1 as one of our models to explain the results of this study.
+
+```{r}
+summary(temp1)
+```
+
+Other potential models to consider:
+
+```{r}
+# Remove the two insignificant variables that have the highest P-value from the Full model
+# Remove maintenance (3), and den (14)
+temp2 <- lm(logPrice ~ . , data=train[,-c(1,2,3,5,9,11,12,14,15)])
+summary(temp2)
+
+# Remove all insignificant variables from Full model at 10% significance level
+# Remove maintenance (3), gym (10), and den (14)
+temp3 <- lm(logPrice ~ . , data=train[,-c(1,2,3,5,9,10,11,12,14,15)])
+summary(temp3)
+```
+
+We will proceed with using the first three models to determine the best one to explain the effects on the response variable.
+
+Since we made changes to our model, we should re-check our model conditions and assumptions:
+
+```{r}
+## temp1
+# temp1 <- lm(logPrice ~ . , data=train[,-c(1,2,5,9,11,12,15)])
+# Check Conditions
+#pairs(train[,-c(1,2,5,9,11,12,15)])
+plot(train$logPrice ~ fitted(temp1), main="Y vs Fitted", xlab="Fitted", ylab="(log)Price") # Condition 1 Satisfied
+lines(lowess(train$logPrice ~ fitted(temp1)), lty=2)
+abline(a = 0, b = 1)
+# MLR 1, 2 and 3 holds 
+# The models are linear in the parameters and come from a random sample 
+# MLR 3, no perfect multicollinearity, holds by the VIF tests above
+# Check Assumptions
+par(mfrow=c(3,4))
+plot(rstandard(temp1)~fitted(temp1), xlab="fitted", ylab="Residuals") # MLR 4 Holds
+for(i in c(3,4,6,7,8,10,13,14,16,17)){
+  plot(rstandard(temp1)~train[,i], xlab=names(train)[i], ylab="Residuals")
+}
+qqnorm(rstandard(temp1))  # Normality Satisfied
+qqline(rstandard(temp1))
+plot(density(resid(temp1))) # MLR 6 Holds
+
+## temp2
+# temp2 <- lm(logPrice ~ . , data=train[,-c(1,2,3,5,9,11,12,14,15)])
+# Check Conditions
+#pairs(train[,-c(1,2,3,5,9,11,12,14,15)])
+par(mfrow=c(1,1))
+plot(train$logPrice ~ fitted(temp2), main="Y vs Fitted", xlab="Fitted", ylab="(log)Price") # Condition 1 Satisfied
+lines(lowess(train$logPrice ~ fitted(temp2)), lty=2)
+abline(a = 0, b = 1)
+# MLR 1, 2 and 3 holds 
+# The models are linear in the parameters and come from a random sample 
+# MLR 3, no perfect multicollinearity, holds by the VIF tests above
+# Check Assumptions
+par(mfrow=c(3,4))
+plot(rstandard(temp2)~fitted(temp2), xlab="fitted", ylab="Residuals") # MLR 4 Holds
+for(i in c(4,6,7,8,10,13,16,17)){
+  plot(rstandard(temp2)~train[,i], xlab=names(train)[i], ylab="Residuals")
+}
+qqnorm(rstandard(temp2))  # Normality Satisfied
+qqline(rstandard(temp2))
+plot(density(resid(temp2))) # MLR6 Holds
+
+## temp3
+# temp3 <- lm(logPrice ~ . , data=train[,-c(1,2,3,5,9,10,11,12,14,15)])
+# Check Conditions
+#pairs(train[,-c(1,2,3,5,9,10,11,12,14,15)])
+par(mfrow=c(1,1))
+plot(train$logPrice ~ fitted(temp3), main="Y vs Fitted", xlab="Fitted", ylab="(log)Price") # Condition 1 Satisfied
+lines(lowess(train$logPrice ~ fitted(temp3)), lty=2)
+abline(a = 0, b = 1)
+# MLR 1, 2 and 3 holds 
+# The models are linear in the parameters and come from a random sample 
+# MLR 3, no perfect multicollinearity, holds by the VIF tests above
+# Check Assumptions
+par(mfrow=c(3,4))
+plot(rstandard(temp3)~fitted(temp3), xlab="fitted", ylab="Residuals") # MLR 4 Holds
+for(i in c(4,6,7,8,13,16,17)){
+  plot(rstandard(temp3)~train[,i], xlab=names(train)[i], ylab="Residuals")
+}
+qqnorm(rstandard(temp3))  # Normality Satisfied
+qqline(rstandard(temp3))
+plot(density(resid(temp3))) # MLR6 Holds
+```
+Both the conditions and model assumptions hold for the first, second, and third model so we can proceed to using statistical summaries and t-test to further pick the best model for this study.
+
+\newpage
+## Model Summary
+
+For each of these model, we now fit them in our test dataset, and then build a table to summarize the differences between the training models and test models.
+
+```{r, echo=FALSE}
+# for temp1
+# first with training then with test set
+
+vif1 <- max(vif(temp1))
+coefs1 <- round(summary(temp1)$coefficients[,1], 4)
+ses1 <- round(summary(temp1)$coefficients[,2], 4)
+# Calculating Robust SE for MLR 5
+robust_vcov1 <- vcovHC(temp1, type = "HC0") # Robust covariance matrix for beta_hat
+ses1r <- round(sqrt(diag(robust_vcov1)), 4) # HETERO-ROBUST standard errors
+
+r1 <- round(summary(temp1)$r.squared, 4)
+r1adj <- round(summary(temp1)$adj.r.squared, 4)
+
+
+# fit in test dataset
+temp1test <- lm(logPrice ~ ., data=test[,-c(1,2,5,9,11,12,15)])
+
+tvif1 <- max(vif(temp1test))
+tcoefs1 <- round(summary(temp1test)$coefficients[,1], 4)
+tses1 <- round(summary(temp1test)$coefficients[,2], 4)
+# Calculating Robust SE for MLR 5
+robust_vcov1t <- vcovHC(temp1test, type = "HC0") # Robust covariance matrix for beta_hat
+tses1r <- round(sqrt(diag(robust_vcov1t)), 4) # HETERO-ROBUST standard errors
+
+tr1 <- round(summary(temp1test)$r.squared, 4)
+tr1adj <- round(summary(temp1test)$adj.r.squared, 4)
+
+# for temp2
+# first with training then with test set
+
+vif2 <- max(vif(temp2))
+coefs2 <- round(summary(temp2)$coefficients[,1], 4)
+ses2 <- round(summary(temp2)$coefficients[,2], 4)
+# Calculating Robust SE for MLR 5
+robust_vcov2 <- vcovHC(temp2, type = "HC0") # Robust covariance matrix for beta_hat
+ses2r <- round(sqrt(diag(robust_vcov2)), 4) # HETERO-ROBUST standard errors
+
+r2 <- round(summary(temp2)$r.squared, 4)
+r2adj <- round(summary(temp2)$adj.r.squared, 4)
+
+# fit in test dataset
+temp2test <- lm(logPrice ~ ., data=test[,-c(1,2,3,5,9,11,12,14,15)])
+
+tvif2 <- max(vif(temp2test))
+tcoefs2 <- round(summary(temp2test)$coefficients[,1], 4)
+tses2 <- round(summary(temp2test)$coefficients[,2], 4)
+# Calculating Robust SE for MLR 5
+robust_vcov2t <- vcovHC(temp2test, type = "HC0") # Robust covariance matrix for beta_hat
+tses2r <- round(sqrt(diag(robust_vcov2t)), 4) # HETERO-ROBUST standard errors
+
+tr2 <- round(summary(temp2test)$r.squared, 4)
+tr2adj <- round(summary(temp2test)$adj.r.squared, 4)
+
+# for temp3
+# first with training then with test set
+
+vif3 <- max(vif(temp3))
+coefs3 <- round(summary(temp3)$coefficients[,1], 4)
+ses3 <- round(summary(temp3)$coefficients[,2], 4)
+# Calculating Robust SE for MLR 5
+robust_vcov3 <- vcovHC(temp3, type = "HC0") # Robust covariance matrix for beta_hat
+ses3r <- round(sqrt(diag(robust_vcov3)), 4) # HETERO-ROBUST standard errors
+
+r3 <- round(summary(temp3)$r.squared, 4)
+r3adj <- round(summary(temp3)$adj.r.squared, 4)
+
+# fit in test dataset
+temp3test <- lm(logPrice ~ ., data=test[,-c(1,2,3,5,9,10,11,12,14,15)])
+
+tvif3 <- max(vif(temp3test))
+tcoefs3 <- round(summary(temp3test)$coefficients[,1], 4)
+tses3 <- round(summary(temp3test)$coefficients[,2], 4)
+# Calculating Robust SE for MLR 5
+robust_vcov3t <- vcovHC(temp3test, type = "HC0") # Robust covariance matrix for beta_hat
+tses3r <- round(sqrt(diag(robust_vcov3t)), 4) # HETERO-ROBUST standard errors
+
+tr3 <- round(summary(temp3test)$r.squared, 4)
+tr3adj <- round(summary(temp3test)$adj.r.squared, 4)
+```
+
+```{r, include=FALSE}
+# Confirming our Inference, significance, for Training and Test Models w/ Robust SE
+coeftst1<-coeftest(temp1, df = Inf, vcov = robust_vcov1)
+coeftst1 # Temp 1 Train
+coeftst1t<-coeftest(temp1test, df = Inf, vcov = robust_vcov1t)
+coeftst1t # Temp 1 Test
+coeftst2<-coeftest(temp2, df = Inf, vcov = robust_vcov2)
+coeftst2 # Temp 2 Train
+coeftst2t<-coeftest(temp2test, df = Inf, vcov = robust_vcov2t)
+coeftst2t # Temp 2 Test
+coeftst3<-coeftest(temp3, df = Inf, vcov = robust_vcov3)
+coeftst3 # Temp 3 Train
+coeftst3t<-coeftest(temp3test, df = Inf, vcov = robust_vcov3t)
+coeftst3t # Temp 3 Test
+```
+
+```{r}
+# Check assumptions and conditions for test sets above
+## temp1test
+#pairs(test[,-c(1,2,5,9,11,12,15)])
+plot(test$logPrice ~ fitted(temp1test), main="Y vs Fitted", xlab="Fitted", ylab="(log)Price") # Condition 1 Satisfied
+lines(lowess(test$logPrice ~ fitted(temp1test)), lty=2)
+abline(a = 0, b = 1)
+# MLR 1, 2 and 3 holds 
+# The models are linear in the parameters and come from a random sample 
+# MLR 3, no perfect multicollinearity, holds by the VIF tests above
+# Check Assumptions
+par(mfrow=c(3,4))
+plot(rstandard(temp1test)~fitted(temp1test), xlab="fitted", ylab="Residuals") # MLR 4 Holds 
+for(i in c(3,4,6,7,8,10,13,14,16,17)){
+  plot(rstandard(temp1test)~test[,i], xlab=names(test)[i], ylab="Residuals")
+}
+qqnorm(rstandard(temp1test))  # Normality Satisfied
+qqline(rstandard(temp1test))
+plot(density(resid(temp1test))) # MLR 6 Holds
+summary(temp1test)
+
+## temp2test
+#pairs(test[,-c(1,2,3,5,9,11,12,14,15)])
+par(mfrow=c(1,1))
+plot(test$logPrice ~ fitted(temp2test), main="Y vs Fitted", xlab="Fitted", ylab="(log)Price") # Condition 1 Satisfied
+lines(lowess(test$logPrice ~ fitted(temp2test)), lty=2)
+abline(a = 0, b = 1)
+# MLR 1, 2 and 3 holds 
+# The models are linear in the parameters and come from a random sample 
+# MLR 3, no perfect multicollinearity, holds by the VIF tests above
+# Check Assumptions
+par(mfrow=c(3,4))
+plot(rstandard(temp2test)~fitted(temp2test), xlab="fitted", ylab="Residuals") # MLR 4 Holds
+for(i in c(4,6,7,8,10,13,16,17)){
+  plot(rstandard(temp2test)~test[,i], xlab=names(test)[i], ylab="Residuals")
+}
+qqnorm(rstandard(temp2test))  # Normality Satisfied
+qqline(rstandard(temp2test))
+plot(density(resid(temp2test))) # MLR 6 Holds
+summary(temp2test)
+
+## temp3test
+#pairs(test[,-c(1,2,3,5,9,10,11,12,14,15)])
+par(mfrow=c(1,1))
+plot(test$logPrice ~ fitted(temp3test), main="Y vs Fitted", xlab="Fitted", ylab="(log)Price") # Condition 1 Satisfied
+lines(lowess(test$logPrice ~ fitted(temp3test)), lty=2)
+abline(a = 0, b = 1)
+# MLR 1, 2 and 3 holds 
+# The models are linear in the parameters and come from a random sample 
+# MLR 3, no perfect multicollinearity, holds by the VIF tests above
+# Check Assumptions
+par(mfrow=c(3,4))
+plot(rstandard(temp3test)~fitted(temp3test), xlab="fitted", ylab="Residuals") # MLR 4 Holds
+for(i in c(4,6,7,8,13,16,17)){
+  plot(rstandard(temp3test)~test[,i], xlab=names(test)[i], ylab="Residuals")
+}
+qqnorm(rstandard(temp3test))  # Normality Satisfied
+qqline(rstandard(temp3test))
+plot(density(resid(temp3test))) # MLR 6 Holds
+summary(temp3test)
+```
+
+
+\newpage
+
+Using the coded information (not shown in this document) we add to a table all the relevant components needed to validate the model. We can further use this table to select a final model.
+
+Characteristic | Model 1 (Train) | Model 1 (Test) | Model 2 (Train) | Model 2 (Test) | Model 3 (Train) | Model 3 (Test)
+---------------|----------------|---------------|-----------------|---------------|-----------------|---------------
+Largest VIF | `r vif1` | `r tvif1` | `r vif2` | `r tvif2` | `r vif3` | `r tvif3`
+Violations | none | none | none | none | none | none
+R$^2$ | `r r1` | `r tr1` | `r r2` | `r tr2` | `r r3` | `r tr3`
+Adjusted $R^2$ | `r r1adj` | `r tr1adj` | `r r2adj` | `r tr2adj` | `r r3adj` | `r tr3adj`
+---------------|----------------|---------------|-----------------|---------------|-----------------|---------------
+Intercept | `r coefs1[1]` $\pm$ (`r ses1r[1]`) \* | `r tcoefs1[1]` $\pm$ (`r tses1r[1]`) \*|`r coefs2[1]` $\pm$ (`r ses2r[1]`) \* | `r tcoefs2[1]` $\pm$ (`r tses2r[1]`) \* | `r coefs3[1]` $\pm$ (`r ses3r[1]`) \* | `r tcoefs3[1]` $\pm$ (`r tses3r[1]`) \*
+Maintenance  | `r coefs1[2]` $\pm$ (`r ses1r[2]`) | `r tcoefs1[2]` $\pm$ (`r tses1r[2]`) | - | - | - | -
+Parking  | `r coefs1[3]` $\pm$ (`r ses1r[3]`) \*|`r tcoefs1[3]` $\pm$ (`r tses1r[3]`) \*| `r coefs2[2]` $\pm$ (`r ses2r[2]`) \*| `r tcoefs2[2]` $\pm$ (`r tses2r[2]`) \*| `r coefs3[2]` $\pm$ (`r ses3r[2]`) \*| `r tcoefs3[2]` $\pm$ (`r tses3r[2]`) \*
+Floor  | `r coefs1[4]` $\pm$ (`r ses1r[4]`) | `r tcoefs1[4]` $\pm$ (`r tses1r[4]`) \*| `r coefs2[3]` $\pm$ (`r ses2r[3]`) \*| `r tcoefs2[3]` $\pm$ (`r tses2r[3]`) \*| `r coefs3[3]` $\pm$ (`r ses3r[3]`) \*| `r tcoefs3[3]` $\pm$ (`r tses3r[3]`) \*
+Age  | `r coefs1[5]` $\pm$ (`r ses1r[5]`) \*|`r tcoefs1[5]` $\pm$ (`r tses1r[5]`) \*| `r coefs2[4]` $\pm$ (`r ses2r[4]`) \*| `r tcoefs2[4]` $\pm$ (`r tses2r[4]`) \*| `r coefs3[4]` $\pm$ (`r ses3r[4]`) \*| `r tcoefs3[4]` $\pm$ (`r tses3r[4]`) \*
+Pool  | `r coefs1[6]` $\pm$ (`r ses1r[6]`) \*|`r tcoefs1[6]` $\pm$ (`r tses1r[6]`) \*| `r coefs2[5]` $\pm$ (`r ses2r[5]`) \*| `r tcoefs2[5]` $\pm$ (`r tses2r[5]`) \*| `r coefs3[5]` $\pm$ (`r ses3r[5]`) \*| `r tcoefs3[5]` $\pm$ (`r tses3r[5]`) \*
+Gym  | `r coefs1[7]` $\pm$ (`r ses1r[7]`) \*| `r tcoefs1[7]` $\pm$ (`r tses1r[7]`) | `r coefs2[6]` $\pm$ (`r ses2r[6]`) \*| `r tcoefs2[6]` $\pm$ (`r tses2r[6]`)  | - | -
+Studio  | `r coefs1[8]` $\pm$ (`r ses1r[8]`) \*| `r tcoefs1[8]` $\pm$ (`r tses1r[8]`) \*|  `r coefs2[7]` $\pm$ (`r ses2r[7]`) \*| `r tcoefs2[7]` $\pm$ (`r tses2r[7]`) \*| `r coefs3[6]` $\pm$ (`r ses3r[6]`) \*| `r tcoefs3[6]` $\pm$ (`r tses3r[6]`) \*
+Den  | `r coefs1[9]` $\pm$ (`r ses1r[9]`) | `r tcoefs1[9]` $\pm$ (`r tses1r[9]`) | - | - | - | - 
+Footage | `r coefs1[10]` $\pm$ (`r ses1r[10]`) \*| `r tcoefs1[10]` $\pm$ (`r tses1r[10]`) \*| `r coefs2[8]` $\pm$ (`r ses2r[8]`) \*| `r tcoefs2[8]` $\pm$ (`r tses2r[8]`) \*| `r coefs3[7]` $\pm$ (`r ses3r[7]`) \*| `r tcoefs3[7]` $\pm$ (`r tses3r[7]`) \*
+
+
+Table: Summary of characteristics of three candidate models in the training and test datasets. Model 1 uses Maintenance cost, Parking, the Floor where the unit is on, Age of the condo, whether it has a Pool or Gym facility, a studio unit, Den, and Square Footage as predictors. Whereas, Model 2 removes Maintenance and Den predictors from Model 1, and Model 3 removes Gym from the predictors which Model 2 has. Response is log(Price) in all three models. Coefficients are presented as estimate $\pm$ Robust SE (\* = significant t-test at $\alpha = 0.05$).
